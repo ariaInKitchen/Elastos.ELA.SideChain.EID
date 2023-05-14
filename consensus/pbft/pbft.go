@@ -12,7 +12,6 @@ import (
 	"github.com/elastos/Elastos.ELA.SideChain.EID/chainbridge-core/crypto"
 	"io"
 	"math/big"
-	"math/rand"
 	"path/filepath"
 	"strings"
 	"time"
@@ -566,12 +565,6 @@ func (p *Pbft) Seal(chain consensus.ChainReader, block *types.Block, results cha
 		return nil
 	}
 	finalBlock := block.WithSeal(header)
-	testcr01 := common.Hex2Bytes("03e435ccd6073813917c2d841a0815d21301ec3286bc1412bb5b099178c68a10b6")
-	if bytes.Equal(testcr01, p.account.PublicKeyBytes()) {
-		randdelay := rand.Int() % 20
-		fmt.Println(">>>>>>> zxb randdelay", time.Duration(randdelay)*time.Second, "hash", finalBlock.Hash().String(), "height", finalBlock.NumberU64())
-		time.Sleep(time.Duration(randdelay) * time.Second)
-	}
 	go func() {
 		select {
 		case results <- finalBlock:
@@ -601,23 +594,28 @@ func (p *Pbft) addConfirmToBlock(header *types.Header, confirm *payload.Confirm)
 
 func (p *Pbft) onConfirm(confirm *payload.Confirm) error {
 	log.Info("--------[onConfirm]------", "proposal:", confirm.Proposal.Hash())
-	if p.isSealOver && p.IsOnduty() {
-		log.Warn("seal block is over, can't confirm")
-		return errors.New("seal block is over, can't confirm")
-	}
 	err := p.blockPool.AppendConfirm(confirm)
 	if err != nil {
 		log.Error("Received confirm", "proposal", confirm.Proposal.Hash().String(), "err:", err)
 		return err
 	}
-	if p.IsOnduty() {
+	duty := p.IsOnDuty()
+	if p.isSealOver && duty {
+		log.Warn("seal block is over, can't confirm")
+		return errors.New("seal block is over, can't confirm")
+	}
+	if duty {
 		log.Info("on duty, set confirm block")
+		curProposal := p.dispatcher.GetProcessingProposal()
+		if curProposal == nil || !curProposal.BlockHash.IsEqual(confirm.Proposal.BlockHash) {
+			return errors.New("is not confirm current proposal")
+		}
 		p.confirmCh <- confirm
 	} else {
 		log.Info("not on duty, not broad confirm block")
 	}
 
-	return err
+	return nil
 }
 
 func (p *Pbft) onUnConfirm(unconfirm *payload.Confirm) error {
